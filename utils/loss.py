@@ -49,7 +49,6 @@ class FocalLoss(nn.Module):
 
     def forward(self, input, target):
         target = target.long()
-        print(input.shape, target.shape)
 
         if input.dim()>2:
             input = input.view(input.size(0),input.size(1),-1)  # N,C,H,W => N,C,H*W

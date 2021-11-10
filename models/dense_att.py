@@ -233,7 +233,7 @@ class _Transition(nn.Sequential):
             self.add_module('pool', nn.AvgPool3d(kernel_size=2, stride=2))
 
 class UpSampleBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, skip_channels=0, scale_factor=(2, 2, 2), attention_type='cbam'):
+    def __init__(self, in_planes, out_planes, skip_channels=0, scale_factor=(2, 2, 2)):
         super(UpSampleBlock, self).__init__()
         self.scale_factor = scale_factor
         self.up = nn.functional.interpolate
@@ -241,16 +241,6 @@ class UpSampleBlock(nn.Module):
         self.conv = nn.Conv3d(in_planes+skip_channels, out_planes, kernel_size=5, stride=1, padding=2, bias=False)
         self.bn = nn.BatchNorm3d(out_planes)
         self.relu = nn.ReLU(inplace=True)
-
-        if skip_channels != 0:
-            if attention_type == 'cbam':
-                self.att = ResidualCBAMLayer(skip_channels)
-            elif attention_type == 'seblock':
-                self.att = SEBlock(skip_channels)
-            elif attention_type == 'channel':
-                self.att = ChannelAttention(skip_channels)
-            elif attention_type == 'spatial':
-                self.att = SpatialAttention()
 
         # weight init
         for m in self.modules():
@@ -266,7 +256,6 @@ class UpSampleBlock(nn.Module):
         if out is not None:
             #print('out.shape: ', out.shape)
             #print('x.shape: ', x.shape)
-            out = self.att(out)
             x = torch.cat([x, out], 1)
         x = self.relu(self.bn(self.conv(x)))
 
@@ -310,7 +299,7 @@ class AtrousDenseNet(nn.Module):
     dilations (list of 6 ints): atrous rate in atrous convolution 
     """
 
-    def __init__(self, in_planes=1, out_planes=2, growth_rate=6, block_config=(6, 6, 6, 6), num_init_features=16, bn_size=4, drop_rate=0., use_dilation=True,):
+    def __init__(self, in_planes=1, out_planes=2, growth_rate=6, block_config=(6, 6, 6, 6), num_init_features=16, bn_size=4, drop_rate=0., use_dilation=True, attention_type='cbam'):
         super(AtrousDenseNet, self).__init__()
 
         # Input convolution 
@@ -321,6 +310,8 @@ class AtrousDenseNet(nn.Module):
             ('relu0', nn.ReLU(inplace=True)),
             ('pool0', nn.MaxPool3d(kernel_size=3, stride=(1, 2, 2), padding=1))
             ]))
+        att_0 = SEBlock(num_init_features)
+        self.features.add_module('attention%d' % (0), att_1)
 
         # Dense Blocks
         num_features = num_init_features
@@ -336,6 +327,10 @@ class AtrousDenseNet(nn.Module):
                     )
             #print(2 ** (i + 1))
             self.features.add_module('denseblock%d' % (i + 1), block)
+            
+            att_block = SEBlock(num_features)
+            self.features.add_module('attention%d' % (i+1), att_block)
+
             num_features = num_features + num_layers * growth_rate
             if i != len(block_config) - 1:
                 if i == len(block_config) - 2:
@@ -370,7 +365,7 @@ class AttD2UNet(nn.Module):
     def __init__(self, in_channels=1, num_classes=2, drop_rate=0.3, skip_connetcion=True, attention_type='cbam'):
         super(AttD2UNet, self).__init__()
         self.skip_connetcion = skip_connetcion
-        features = AtrousDenseNet(in_channels, num_classes, drop_rate=drop_rate).features
+        features = AtrousDenseNet(in_channels, num_classes, drop_rate=drop_rate, attention_type=attention_type).features
 
         # building atrous dense unet
         self.input_block = features[:4]
@@ -385,8 +380,8 @@ class AttD2UNet(nn.Module):
 
         self.up_1 = UpSampleBlock(32, 16, scale_factor=(1, 2, 2)) 
         if skip_connetcion:
-            self.up_2 = UpSampleBlock(64, 32, 52, attention_type=attention_type)
-            self.up_3 = UpSampleBlock(69, 64, 62, attention_type=attention_type)
+            self.up_2 = UpSampleBlock(64, 32, 52)
+            self.up_3 = UpSampleBlock(69, 64, 62)
         else:
             self.up_2 = UpSampleBlock(64, 32)
             self.up_3 = UpSampleBlock(69, 64)
